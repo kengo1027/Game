@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>オセロ</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+        background: #eef2f5;
+        color: #1f2937;
+        display: flex;
+        justify-content: center;
+      }
+
+      .container {
+        width: min(920px, 100%);
+        display: grid;
+        gap: 20px;
+        grid-template-columns: 1fr;
+      }
+
+      .panel {
+        background: #ffffff;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 3px 14px rgba(0, 0, 0, 0.08);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.8rem;
+      }
+
+      .status {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .chip {
+        border: 1px solid #d1d5db;
+        border-radius: 9999px;
+        padding: 6px 12px;
+        font-size: 0.95rem;
+      }
+
+      .board-wrap {
+        overflow: auto;
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: repeat(8, minmax(40px, 64px));
+        grid-template-rows: repeat(8, minmax(40px, 64px));
+        gap: 2px;
+        background: #14532d;
+        border: 3px solid #0f3f21;
+        padding: 4px;
+        border-radius: 10px;
+      }
+
+      .cell {
+        position: relative;
+        border: none;
+        cursor: pointer;
+        background: #1f7a3d;
+        display: grid;
+        place-items: center;
+        aspect-ratio: 1 / 1;
+      }
+
+      .cell:hover {
+        background: #24894a;
+      }
+
+      .cell:disabled {
+        cursor: default;
+      }
+
+      .stone {
+        width: 72%;
+        height: 72%;
+        border-radius: 50%;
+        box-shadow: inset 0 3px 6px rgba(255, 255, 255, 0.2),
+          inset 0 -3px 6px rgba(0, 0, 0, 0.35);
+      }
+
+      .stone.black {
+        background: #1b1b1b;
+      }
+
+      .stone.white {
+        background: #f8fafc;
+      }
+
+      .hint {
+        position: absolute;
+        width: 22%;
+        height: 22%;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.75);
+      }
+
+      .controls {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      button.action {
+        border: none;
+        background: #2563eb;
+        color: white;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+
+      button.action:hover {
+        background: #1e4fbf;
+      }
+
+      .rules {
+        margin: 0;
+        padding-left: 18px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <section class="panel">
+        <h1>オセロ</h1>
+        <div class="status">
+          <span class="chip" id="turnInfo"></span>
+          <span class="chip" id="scoreInfo"></span>
+          <span class="chip" id="messageInfo"></span>
+        </div>
+      </section>
+
+      <section class="panel board-wrap">
+        <div class="board" id="board" aria-label="オセロ盤"></div>
+      </section>
+
+      <section class="panel controls">
+        <button class="action" id="restartBtn" type="button">最初からやり直す</button>
+      </section>
+
+      <section class="panel">
+        <h2>ルール</h2>
+        <ul class="rules">
+          <li>挟める場所にだけ石を置けます（挟めない場所には置けません）。</li>
+          <li>置いた石と同じ色の石で相手の石を挟んだら、その間の石をすべて裏返します。</li>
+          <li>置ける場所がなければ自動的にパスします。</li>
+          <li>両者とも置ける場所がなくなるか盤面が埋まると終了し、石の多い方が勝ちです。</li>
+        </ul>
+      </section>
+    </main>
+
+    <script>
+      const SIZE = 8;
+      const EMPTY = 0;
+      const BLACK = 1;
+      const WHITE = 2;
+      const DIRECTIONS = [
+        [-1, -1], [-1, 0], [-1, 1],
+        [0, -1],          [0, 1],
+        [1, -1],  [1, 0], [1, 1],
+      ];
+
+      const boardEl = document.getElementById("board");
+      const turnInfoEl = document.getElementById("turnInfo");
+      const scoreInfoEl = document.getElementById("scoreInfo");
+      const messageInfoEl = document.getElementById("messageInfo");
+      const restartBtn = document.getElementById("restartBtn");
+
+      let state = createInitialState();
+
+      restartBtn.addEventListener("click", () => {
+        state = createInitialState();
+        render();
+      });
+
+      function createInitialState() {
+        const board = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+        board[3][3] = WHITE;
+        board[3][4] = BLACK;
+        board[4][3] = BLACK;
+        board[4][4] = WHITE;
+        return {
+          board,
+          turn: BLACK,
+          gameOver: false,
+          message: "黒の手番です",
+          passCount: 0,
+        };
+      }
+
+      function opponent(player) {
+        return player === BLACK ? WHITE : BLACK;
+      }
+
+      function inBounds(row, col) {
+        return row >= 0 && row < SIZE && col >= 0 && col < SIZE;
+      }
+
+      function flippableStones(board, player, row, col) {
+        if (board[row][col] !== EMPTY) return [];
+
+        const enemy = opponent(player);
+        const flips = [];
+
+        for (const [dr, dc] of DIRECTIONS) {
+          let r = row + dr;
+          let c = col + dc;
+          const line = [];
+
+          while (inBounds(r, c) && board[r][c] === enemy) {
+            line.push([r, c]);
+            r += dr;
+            c += dc;
+          }
+
+          if (line.length > 0 && inBounds(r, c) && board[r][c] === player) {
+            flips.push(...line);
+          }
+        }
+
+        return flips;
+      }
+
+      function legalMoves(board, player) {
+        const moves = [];
+        for (let row = 0; row < SIZE; row += 1) {
+          for (let col = 0; col < SIZE; col += 1) {
+            const flips = flippableStones(board, player, row, col);
+            if (flips.length > 0) {
+              moves.push({ row, col, flips });
+            }
+          }
+        }
+        return moves;
+      }
+
+      function countStones(board) {
+        let black = 0;
+        let white = 0;
+
+        for (let row = 0; row < SIZE; row += 1) {
+          for (let col = 0; col < SIZE; col += 1) {
+            if (board[row][col] === BLACK) black += 1;
+            else if (board[row][col] === WHITE) white += 1;
+          }
+        }
+
+        return { black, white };
+      }
+
+      function boardFilled(board) {
+        return board.every((row) => row.every((cell) => cell !== EMPTY));
+      }
+
+      function applyMove(row, col) {
+        if (state.gameOver) return;
+
+        const moves = legalMoves(state.board, state.turn);
+        const move = moves.find((m) => m.row === row && m.col === col);
+        if (!move) return;
+
+        state.board[row][col] = state.turn;
+        for (const [r, c] of move.flips) {
+          state.board[r][c] = state.turn;
+        }
+
+        state.turn = opponent(state.turn);
+        state.passCount = 0;
+
+        handlePassOrEnd();
+        render();
+      }
+
+      function handlePassOrEnd() {
+        let moves = legalMoves(state.board, state.turn);
+
+        if (moves.length === 0) {
+          state.passCount += 1;
+          const playerName = state.turn === BLACK ? "黒" : "白";
+          state.message = `${playerName}は置ける場所がないためパスします`;
+          state.turn = opponent(state.turn);
+          moves = legalMoves(state.board, state.turn);
+
+          if (moves.length === 0) {
+            state.passCount += 1;
+          }
+        } else {
+          state.message = `${state.turn === BLACK ? "黒" : "白"}の手番です`;
+        }
+
+        if (boardFilled(state.board) || state.passCount >= 2) {
+          const { black, white } = countStones(state.board);
+          state.gameOver = true;
+          if (black > white) {
+            state.message = `ゲーム終了：黒の勝ち (${black} - ${white})`;
+          } else if (white > black) {
+            state.message = `ゲーム終了：白の勝ち (${white} - ${black})`;
+          } else {
+            state.message = `ゲーム終了：引き分け (${black} - ${white})`;
+          }
+        }
+      }
+
+      function render() {
+        const moves = state.gameOver ? [] : legalMoves(state.board, state.turn);
+        const hintSet = new Set(moves.map((m) => `${m.row}:${m.col}`));
+        const turnText = state.gameOver
+          ? "手番: ゲーム終了"
+          : `手番: ${state.turn === BLACK ? "黒" : "白"}`;
+        const { black, white } = countStones(state.board);
+
+        turnInfoEl.textContent = turnText;
+        scoreInfoEl.textContent = `黒 ${black} : 白 ${white}`;
+        messageInfoEl.textContent = state.message;
+
+        boardEl.textContent = "";
+
+        for (let row = 0; row < SIZE; row += 1) {
+          for (let col = 0; col < SIZE; col += 1) {
+            const cell = document.createElement("button");
+            cell.className = "cell";
+            cell.type = "button";
+            cell.setAttribute("aria-label", `${row + 1}行${col + 1}列`);
+            cell.disabled = state.gameOver;
+            cell.addEventListener("click", () => applyMove(row, col));
+
+            const value = state.board[row][col];
+            if (value === BLACK || value === WHITE) {
+              const stone = document.createElement("span");
+              stone.className = `stone ${value === BLACK ? "black" : "white"}`;
+              cell.appendChild(stone);
+            } else if (hintSet.has(`${row}:${col}`)) {
+              const hint = document.createElement("span");
+              hint.className = "hint";
+              cell.appendChild(hint);
+            }
+
+            boardEl.appendChild(cell);
+          }
+        }
+      }
+
+      render();
+    </script>
+  </body>
+</html>
